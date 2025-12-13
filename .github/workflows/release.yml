@@ -1,0 +1,157 @@
+name: Release Linux Builds
+
+on:
+  release:
+    types: [created]
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        target:
+          - deb
+          - rpm
+          - AppImage
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Install system dependencies for RPM
+        if: matrix.target == 'rpm'
+        run: sudo apt-get update && sudo apt-get install -y rpm
+      
+      - name: Install libcrypt1 for DEB
+        if: matrix.target == 'deb'
+        run: sudo apt-get update && sudo apt-get install -y libcrypt1
+      
+      - name: Build ${{ matrix.target }}
+        run: npm run dist:${{ matrix.target }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ELECTRON_BUILDER_PUBLISH: never
+      
+      - name: Upload ${{ matrix.target }} artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linkus-linux-${{ matrix.target }}
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.AppImage
+          retention-days: 5
+      
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.AppImage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-release-notes:
+    needs: build-linux
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get previous tag
+          PREVIOUS_TAG=$(git describe --abbrev=0 --tags $(git rev-list --tags --skip=1 --max-count=1) 2>/dev/null || echo "")
+          CURRENT_TAG=${{ github.event.release.tag_name }}
+          
+          if [ -z "$PREVIOUS_TAG" ]; then
+            COMMITS=$(git log --pretty=format:"%s" $CURRENT_TAG)
+          else
+            COMMITS=$(git log --pretty=format:"%s" $PREVIOUS_TAG..$CURRENT_TAG)
+          fi
+          
+          # Separate into features and bugfixes
+          FEATURES=$(echo "$COMMITS" | grep -iE "^(feat|feature|add|new)" || true)
+          BUGFIXES=$(echo "$COMMITS" | grep -iE "^(fix|bug|patch|hotfix)" || true)
+          OTHER=$(echo "$COMMITS" | grep -viE "^(feat|feature|add|new|fix|bug|patch|hotfix)" || true)
+          
+          # Build changelog
+          CHANGELOG="## 🚀 Features\n"
+          if [ -n "$FEATURES" ]; then
+            CHANGELOG+=$(echo "$FEATURES" | sed 's/^/- /')
+            CHANGELOG+="\n"
+          else
+            CHANGELOG+="- No new features in this release\n"
+          fi
+          
+          CHANGELOG+="\n## 🐛 Bug Fixes\n"
+          if [ -n "$BUGFIXES" ]; then
+            CHANGELOG+=$(echo "$BUGFIXES" | sed 's/^/- /')
+            CHANGELOG+="\n"
+          else
+            CHANGELOG+="- No bug fixes in this release\n"
+          fi
+          
+          if [ -n "$OTHER" ]; then
+            CHANGELOG+="\n## 📝 Other Changes\n"
+            CHANGELOG+=$(echo "$OTHER" | sed 's/^/- /')
+            CHANGELOG+="\n"
+          fi
+          
+          CHANGELOG+="\n## 📦 Linux Packages\n\n"
+          CHANGELOG+="This release includes the following Linux packages:\n\n"
+          CHANGELOG+="- **Debian/Ubuntu (.deb)** - For Debian-based distributions\n"
+          CHANGELOG+="- **Fedora/RHEL (.rpm)** - For Red Hat-based distributions\n"
+          CHANGELOG+="- **AppImage** - Universal package for all Linux distributions\n\n"
+          CHANGELOG+="### Installation\n\n"
+          CHANGELOG+="**Debian/Ubuntu:**\n"
+          CHANGELOG+="\`\`\`bash\n"
+          CHANGELOG+="sudo dpkg -i linkus-linux_*.deb\n"
+          CHANGELOG+="sudo apt-get install -f\n"
+          CHANGELOG+="\`\`\`\n\n"
+          CHANGELOG+="**Fedora/RHEL:**\n"
+          CHANGELOG+="\`\`\`bash\n"
+          CHANGELOG+="sudo rpm -i linkus-linux-*.rpm\n"
+          CHANGELOG+="\`\`\`\n\n"
+          CHANGELOG+="**AppImage:**\n"
+          CHANGELOG+="\`\`\`bash\n"
+          CHANGELOG+="chmod +x Linkus-Linux-*.AppImage\n"
+          CHANGELOG+="./Linkus-Linux-*.AppImage\n"
+          CHANGELOG+="\`\`\`\n"
+          
+          # Save to file
+          echo -e "$CHANGELOG" > changelog.md
+          
+          # Output for next step
+          echo "changelog_file=changelog.md" >> $GITHUB_OUTPUT
+      
+      - name: Update release with changelog
+        uses: softprops/action-gh-release@v1
+        with:
+          body_path: changelog.md
+          append_body: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
