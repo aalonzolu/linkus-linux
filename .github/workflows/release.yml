@@ -37,7 +37,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libcrypt1
       
       - name: Build ${{ matrix.target }}
-        run: npm run dist:linux:${{ matrix.target }}
+        run: npm run dist:${{ matrix.target }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
@@ -45,13 +45,19 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: linkus-linux-${{ matrix.target }}
-          path: dist/*.${{ matrix.target == 'AppImage' && 'AppImage' || matrix.target }}
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.AppImage
           retention-days: 5
       
       - name: Upload release assets
         uses: softprops/action-gh-release@v1
         with:
-          files: dist/*.${{ matrix.target == 'AppImage' && 'AppImage' || matrix.target }}
+          files: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.AppImage
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
