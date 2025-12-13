@@ -1,0 +1,59 @@
+{
+  "name": "linkus-linux",
+  "version": "0.1.0",
+  "description": "Unofficial Linkus client for Linux - Desktop app for Yeastar P-Series PBX with tel: protocol handler",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron --no-sandbox .",
+    "dist": "electron-builder --linux",
+    "dist:deb": "electron-builder --linux deb",
+    "dist:rpm": "electron-builder --linux rpm",
+    "dist:AppImage": "electron-builder --linux AppImage",
+    "build:deb": "bash scripts/build-deb.sh",
+    "register:tel": "bash scripts/register-tel.sh"
+  },
+  "keywords": ["linkus", "pbx", "tel", "electron", "softphone", "yeastar"],
+  "author": "Andres Alonzo <@aalonzolu>",
+  "license": "MIT",
+  "homepage": "https://github.com/aalonzolu/linkus-linux",
+  "dependencies": {
+    "electron-positioner": "^4.1.0"
+  },
+  "devDependencies": {
+    "electron": "^25.0.0",
+    "electron-builder": "^24.0.0"
+  },
+  "build": {
+    "appId": "com.github.aalonzolu.linkuslinux",
+    "productName": "Linkus Linux",
+    "files": [
+      "**/*"
+    ],
+    "asarUnpack": [
+      "build/icons/**",
+      "app/assets/**"
+    ],
+    "linux": {
+      "target": ["AppImage", "deb", "rpm"],
+      "category": "Network",
+      "executableName": "linkus-linux",
+      "synopsis": "Linkus Linux",
+      "description": "Unofficial Linkus client for Linux using Electron. Desktop application for Yeastar P-Series PBX with tel: protocol handler.",
+      "desktop": {
+        "Name": "Linkus Linux",
+        "Comment": "Linkus PBX tel: handler",
+        "GenericName": "Softphone",
+        "MimeType": "x-scheme-handler/tel",
+        "Terminal": "false",
+        "StartupWMClass": "linkus-linux"
+      },
+      "maintainer": "Andres Alonzo <aalonzolu@gmail.com>"
+    },
+    "protocols": [
+      {
+        "name": "tel",
+        "schemes": ["tel"]
+      }
+    ]
+  }
+}
