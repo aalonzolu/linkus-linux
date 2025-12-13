@@ -5,6 +5,9 @@ const { exec, execSync, spawn } = require('child_process');
 const os = require('os');
 const https = require('https');
 
+// Disable GPU acceleration to prevent crashes on some Linux systems
+app.disableHardwareAcceleration();
+
 // Import notification and tray systems
 const config = require('./app/config');
 const NotificationService = require('./app/notifications/service');
@@ -83,6 +86,7 @@ function createSetupWindow() {
     width: 600,
     height: 550,
     resizable: false,
+    show: false,
     icon: path.join(__dirname, 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'setupPreload.js'),
@@ -93,6 +97,12 @@ function createSetupWindow() {
 
   setupWindow.loadFile('setup.html');
   setupWindow.setMenuBarVisibility(false);
+  
+  // Show window when ready to prevent flickering
+  setupWindow.once('ready-to-show', () => {
+    setupWindow.show();
+    console.log('[Main] Setup window shown');
+  });
 
   // Open external links in system browser
   setupWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -112,6 +122,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1000,
     height: 800,
+    show: false,
     icon: path.join(__dirname, 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -122,6 +133,17 @@ function createWindow() {
 
   const serverUrl = config.get('serverUrl');
   mainWindow.loadURL(serverUrl);
+  
+  // Show window when ready to prevent flickering
+  mainWindow.once('ready-to-show', () => {
+    // Only show if not configured to start minimized
+    if (!config.get('startMinimized') || pendingTel) {
+      mainWindow.show();
+      console.log('[Main] Main window shown');
+    } else {
+      console.log('[Main] Main window created but hidden (startMinimized)');
+    }
+  });
 
   // Open external links in system browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -246,6 +268,7 @@ function initializeSetupHandlers() {
   });
 
   ipcMain.on('close-setup', () => {
+    console.log('[Main] Closing setup window and creating main window');
     if (setupWindow) {
       setupWindow.close();
     }
@@ -255,6 +278,7 @@ function initializeSetupHandlers() {
     } else {
       // Reload with new URL
       mainWindow.loadURL(config.get('serverUrl'));
+      mainWindow.show();
     }
   });
 
@@ -555,13 +579,8 @@ if (!gotLock) {
       console.log('[Main] Server not configured, showing setup window');
       createSetupWindow();
     } else {
+      console.log('[Main] Server configured, creating main window');
       createWindow();
-
-      // If configured to start minimized (e.g., on boot), hide the window
-      if (config.get('startMinimized') && !tel) {
-        mainWindow.hide();
-        console.log('[Main] Started minimized to tray');
-      }
 
       const registered = await registerTelProtocol({ quiet: true });
       if (!registered) {
