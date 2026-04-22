@@ -99,6 +99,29 @@
       color: #999;
       margin-top: 6px;
     }
+
+    .autostart-group {
+      background: #f8f9fa;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 500;
+      color: #333;
+      margin-bottom: 0;
+      cursor: pointer;
+    }
+
+    .checkbox-row input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+    }
     
     .error {
       color: #e74c3c;
@@ -283,6 +306,14 @@
           <p class="error" id="error"></p>
           <p class="success" id="success"></p>
         </div>
+
+        <div class="form-group autostart-group">
+          <label class="checkbox-row">
+            <input type="checkbox" id="autostart" checked />
+            <span id="autostartLabel">Start Linkus automatically at login</span>
+          </label>
+          <p class="hint" id="autostartHint">Launches minimized to the tray so you don't miss incoming calls.</p>
+        </div>
         
         <div class="server-info" id="serverInfo">
           <h3 id="serverInfoTitle">Server Information</h3>
@@ -323,6 +354,8 @@
         mainSubtitle: 'Configure your Yeastar P-Series PBX server to get started',
         labelServerUrl: 'PBX Server URL',
         hintServerUrl: 'Enter your Yeastar P-Series PBX domain or full URL',
+        autostartLabel: 'Start Linkus automatically at login',
+        autostartHint: "Launches minimized to the tray so you don't miss incoming calls.",
         submitBtn: 'Validate & Continue',
         loadingText: 'Validating server...',
         serverInfoTitle: 'Server Information',
@@ -342,6 +375,8 @@
         mainSubtitle: 'Configura tu servidor Yeastar P-Series PBX para comenzar',
         labelServerUrl: 'URL del Servidor PBX',
         hintServerUrl: 'Ingresa el dominio o URL completa de tu PBX Yeastar P-Series',
+        autostartLabel: 'Iniciar Linkus automáticamente al iniciar sesión',
+        autostartHint: 'Se abrirá minimizado en la bandeja del sistema para no perder llamadas entrantes.',
         submitBtn: 'Validar y Continuar',
         loadingText: 'Validando servidor...',
         serverInfoTitle: 'Información del Servidor',
@@ -368,6 +403,8 @@
     document.getElementById('mainSubtitle').textContent = t.mainSubtitle;
     document.getElementById('labelServerUrl').textContent = t.labelServerUrl;
     document.getElementById('hintServerUrl').textContent = t.hintServerUrl;
+    document.getElementById('autostartLabel').textContent = t.autostartLabel;
+    document.getElementById('autostartHint').textContent = t.autostartHint;
     document.getElementById('submitBtn').textContent = t.submitBtn;
     document.getElementById('loadingText').textContent = t.loadingText;
     document.getElementById('serverInfoTitle').textContent = t.serverInfoTitle;
@@ -422,7 +459,8 @@
           // Save and close after a short delay
           setTimeout(async () => {
             await window.setupApi.saveConfig(normalizedUrl);
-            window.setupApi.closeSetup();
+            const autoStart = document.getElementById('autostart').checked;
+            window.setupApi.closeSetup(autoStart);
           }, 1500);
         } else {
           showError(result.error || t.errorValidation);

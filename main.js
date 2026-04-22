@@ -1,7 +1,7 @@
-const { app, BrowserWindow, dialog, shell, ipcMain, session } = require('electron');
+const { app, BrowserWindow, Menu, dialog, shell, ipcMain, session, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { exec, execSync, spawn } = require('child_process');
+const { exec } = require('child_process');
 const os = require('os');
 const https = require('https');
 
@@ -17,6 +17,9 @@ const config = require('./app/config');
 const NotificationService = require('./app/notifications/service');
 const CustomNotificationManager = require('./app/customNotifications/index');
 const { ApplicationTray } = require('./app/tray/tray');
+const { initAutoUpdater } = require('./app/updater/updater');
+const { AutostartManager } = require('./app/autostart/linux');
+const { maskTel, sanitizeArgv, sanitizeUrl } = require('./app/utils/sanitize');
 
 // Set app name for proper window class matching
 app.setName('linkus-linux');
@@ -193,7 +196,18 @@ function createWindow() {
 
   const serverUrl = config.get('serverUrl');
   mainWindow.loadURL(serverUrl);
-  
+
+  // Apply WebRTC IP handling policy (helps on VPN / multi-NIC setups).
+  try {
+    const policy = config.get('webRTCIPHandlingPolicy');
+    if (policy && typeof mainWindow.webContents.setWebRTCIPHandlingPolicy === 'function') {
+      mainWindow.webContents.setWebRTCIPHandlingPolicy(policy);
+      console.log('[Main] WebRTC IP handling policy:', policy);
+    }
+  } catch (e) {
+    console.warn('[Main] Could not set WebRTC IP handling policy:', e.message);
+  }
+
   // Show window when ready to prevent flickering
   mainWindow.once('ready-to-show', () => {
     // Only show if not configured to start minimized
@@ -233,6 +247,23 @@ function createWindow() {
     }
   });
 
+  // Reload only if the *main frame* failed. Sub-frame (iframe) errors must not
+  // trigger a full reload or they can wipe auth state.
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    // -3 = ABORTED (user navigated away); ignore.
+    if (errorCode === -3) return;
+    if (!isMainFrame) {
+      console.warn('[Main] Sub-frame load failed, ignoring:', errorCode, errorDescription);
+      return;
+    }
+    console.warn('[Main] Main frame load failed, reloading in 3s:', errorCode, errorDescription, sanitizeUrl(validatedURL));
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.reload();
+      }
+    }, 3000);
+  });
+
   mainWindow.on('close', (event) => {
     // Don't close if tray is enabled - minimize to tray instead
     if (config.get('tray.enabled') && !app.isQuitting) {
@@ -252,46 +283,10 @@ function createWindow() {
 
 function initializeNotificationSystems() {
   try {
-    // Initialize sound player (optional - can work without it)
-    let soundPlayer = null;
-    // Try a simple local sound player using system utilities (paplay/aplay/ffplay/play)
-    function createSoundPlayer() {
-      try {
-        const candidates = ['/usr/bin/paplay', '/usr/bin/aplay', '/usr/bin/play', '/usr/bin/ffplay'];
-        let playerCmd = candidates.find(p => fs.existsSync(p));
-        if (!playerCmd) {
-          try {
-            const which = execSync("command -v paplay || command -v aplay || command -v play || command -v ffplay", { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
-            if (which) playerCmd = which.split('\n')[0];
-          } catch (e) {
-            // no-op
-          }
-        }
-
-        if (!playerCmd) return null;
-
-        return {
-          play: (file) => {
-            return new Promise((resolve, reject) => {
-              const args = playerCmd.endsWith('ffplay') ? ['-nodisp', '-autoexit', '-loglevel', 'quiet', file] : [file];
-              const p = spawn(playerCmd, args, { stdio: 'ignore' });
-              p.on('error', (err) => reject(err));
-              p.on('close', () => resolve(true));
-            });
-          }
-        };
-      } catch (e) {
-        return null;
-      }
-    }
-
-    soundPlayer = createSoundPlayer();
-    if (soundPlayer) console.log('[Main] Sound player initialized (system)');
-    else console.warn('[Main] No audio player found - notifications will be silent');
-
-    // Initialize notification service
+    // Initialize notification service. Sound playback is now handled in the
+    // renderer via Web Audio API (see preload.js), so no system audio player
+    // is required here.
     notificationService = new NotificationService(
-      soundPlayer,
       config,
       mainWindow,
       () => 'available' // getUserStatus function - can be enhanced later
@@ -327,8 +322,25 @@ function initializeSetupHandlers() {
     return { success: true };
   });
 
-  ipcMain.on('close-setup', () => {
+  ipcMain.on('close-setup', (event, payload) => {
     console.log('[Main] Closing setup window and creating main window');
+
+    // Apply autostart preference collected by the setup wizard.
+    try {
+      const wantsAutostart = Boolean(payload && payload.autoStart);
+      if (wantsAutostart) {
+        const autostart = new AutostartManager();
+        const ok = autostart.enable();
+        config.set('autoStart', Boolean(ok));
+        config.set('startMinimized', true);
+        config.set('autostartPromptShown', true);
+        if (tray) tray.updateContextMenu();
+        console.log('[Main] Autostart from setup wizard:', ok);
+      }
+    } catch (e) {
+      console.warn('[Main] Could not apply autostart from setup:', e.message);
+    }
+
     if (setupWindow) {
       setupWindow.close();
     }
@@ -506,6 +518,54 @@ function promptForTelHandler() {
     });
 }
 
+function promptForAutostart() {
+  if (config.get('autostartPromptShown')) return;
+  if (config.get('autoStart')) return;
+
+  const autostart = new AutostartManager();
+  if (autostart.isEnabled()) {
+    // Desktop entry already there — reconcile config and skip the dialog.
+    config.set('autoStart', true);
+    config.set('autostartPromptShown', true);
+    return;
+  }
+
+  dialog
+    .showMessageBox(mainWindow ?? undefined, {
+      type: 'question',
+      buttons: ['Activar', 'Ahora no'],
+      defaultId: 0,
+      cancelId: 1,
+      message: '¿Iniciar Linkus Linux automáticamente al iniciar sesión?',
+      detail:
+        'Esto permite que Linkus esté listo para recibir llamadas apenas inicies sesión. ' +
+        'La app se abrirá minimizada en la bandeja del sistema. Puedes cambiarlo después desde el menú del icono en la bandeja.',
+      noLink: true
+    })
+    .then(({ response }) => {
+      config.set('autostartPromptShown', true);
+      if (response !== 0) return;
+      const ok = autostart.enable();
+      config.set('autoStart', Boolean(ok));
+      if (ok) {
+        config.set('startMinimized', true);
+        // Refresh the tray menu so the "Start at login" checkbox reflects the
+        // new state immediately (without requiring the user to click it).
+        if (tray) tray.updateContextMenu();
+      } else {
+        dialog.showMessageBox(mainWindow ?? undefined, {
+          type: 'info',
+          buttons: ['Entendido'],
+          message: 'No se pudo activar el inicio automático.',
+          detail: 'Revisa los permisos de ~/.config/autostart o actívalo más tarde desde el menú de la bandeja.'
+        });
+      }
+    })
+    .catch((err) => {
+      console.warn('[Main] Autostart prompt failed:', err.message);
+    });
+}
+
 async function injectNumberAndCall(telUrl) {
   if (!mainWindow) return;
   const match = /^tel:(.*)$/.exec(telUrl);
@@ -593,6 +653,68 @@ async function injectNumberAndCall(telUrl) {
   }
 }
 
+// Minimal application menu so standard shortcuts still work when the tray
+// hides the window. Based on the pattern used by teams-for-linux (#2195).
+function buildApplicationMenu() {
+  const template = [
+    {
+      label: 'Archivo',
+      submenu: [
+        {
+          label: 'Configurar servidor...',
+          click: () => { ipcMain.emit('show-setup-window'); }
+        },
+        { type: 'separator' },
+        {
+          label: 'Ocultar ventana',
+          accelerator: 'CmdOrCtrl+W',
+          click: () => { if (mainWindow) mainWindow.hide(); }
+        },
+        {
+          label: 'Salir',
+          accelerator: 'CmdOrCtrl+Q',
+          click: () => { app.isQuitting = true; app.quit(); }
+        }
+      ]
+    },
+    {
+      label: 'Editar',
+      submenu: [
+        { role: 'undo', label: 'Deshacer' },
+        { role: 'redo', label: 'Rehacer' },
+        { type: 'separator' },
+        { role: 'cut', label: 'Cortar' },
+        { role: 'copy', label: 'Copiar' },
+        { role: 'paste', label: 'Pegar' },
+        { role: 'selectAll', label: 'Seleccionar todo' }
+      ]
+    },
+    {
+      label: 'Ver',
+      submenu: [
+        { role: 'reload', label: 'Recargar' },
+        { role: 'forceReload', label: 'Forzar recarga' },
+        { role: 'toggleDevTools', label: 'Herramientas de desarrollador' },
+        { type: 'separator' },
+        { role: 'resetZoom', label: 'Zoom normal' },
+        { role: 'zoomIn', label: 'Acercar' },
+        { role: 'zoomOut', label: 'Alejar' },
+        { type: 'separator' },
+        { role: 'togglefullscreen', label: 'Pantalla completa' }
+      ]
+    },
+    {
+      label: 'Ventana',
+      submenu: [
+        { role: 'minimize', label: 'Minimizar' },
+        { role: 'close', label: 'Cerrar' }
+      ]
+    }
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 // Make single instance and handle second-instance args (Linux passes tel: as argv)
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -600,6 +722,7 @@ if (!gotLock) {
 } else {
   app.on('second-instance', (event, argv) => {
     const tel = getTelFromArgv(argv);
+    console.log('[Main] second-instance argv:', sanitizeArgv(argv));
     if (tel) {
       if (mainWindow) {
         if (mainWindow.isMinimized()) mainWindow.restore();
@@ -619,6 +742,18 @@ if (!gotLock) {
 
   app.on('ready', async () => {
     cleanupLegacyUserDesktopEntry();
+
+    // Self-heal the XDG autostart entry so it matches config on every launch.
+    try {
+      new AutostartManager().sync(config);
+    } catch (e) {
+      console.warn('[Main] Autostart sync failed:', e.message);
+    }
+
+    // Install a minimal application menu so standard keyboard shortcuts
+    // (reload, copy/paste, zoom, devtools, quit) keep working even when the
+    // window is hidden to tray. Based on the teams-for-linux pattern.
+    buildApplicationMenu();
 
     // Initialize setup handlers
     initializeSetupHandlers();
@@ -659,6 +794,32 @@ if (!gotLock) {
       const registered = await registerTelProtocol({ quiet: true });
       if (!registered) {
         setTimeout(() => promptForTelHandler(), 1500);
+      }
+
+      // Offer autostart once for users who already completed setup before
+      // this feature existed.
+      setTimeout(() => promptForAutostart(), 2500);
+    }
+
+    // Recover from stale auth / dropped connection after the machine resumes
+    // from sleep. Teams-for-linux #2311 / #2376 fix the same class of issue.
+    try {
+      powerMonitor.on('resume', () => {
+        console.log('[Main] System resumed, reloading main window');
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.reload();
+        }
+      });
+    } catch (e) {
+      console.warn('[Main] Could not register powerMonitor listener:', e.message);
+    }
+
+    // Auto-update (AppImage / deb). No-op in dev.
+    if (config.get('autoUpdate.enabled') !== false) {
+      try {
+        initAutoUpdater(mainWindow);
+      } catch (e) {
+        console.warn('[Main] Auto-updater init failed:', e.message);
       }
     }
   });

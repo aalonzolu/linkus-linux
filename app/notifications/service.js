@@ -1,14 +1,22 @@
 const { ipcMain, Notification } = require('electron');
 const path = require('path');
+const fs = require('fs');
+
+// Allow-list of sound files shipped with the app. Protects the
+// `get-sound-buffer` IPC handler from path-traversal abuse.
+const SOUND_FILES = {
+  message: 'message.wav',
+  'incoming-call': 'incoming-call.wav',
+  'call-ended': 'call-ended.wav'
+};
 
 class NotificationService {
-  #soundPlayer = null;
   #config = null;
   #mainWindow = null;
   #getUserStatus = null;
+  #soundsDir = path.join(__dirname, '../assets/sounds');
 
-  constructor(soundPlayer, config, mainWindow, getUserStatus) {
-    this.#soundPlayer = soundPlayer;
+  constructor(config, mainWindow, getUserStatus) {
     this.#config = config;
     this.#mainWindow = mainWindow;
     this.#getUserStatus = getUserStatus || (() => 'available');
@@ -16,14 +24,15 @@ class NotificationService {
 
   initialize() {
     console.log('[NotificationService] Initializing notification handlers');
-    
+
     ipcMain.handle('show-notification', this.#handleShowNotification.bind(this));
     ipcMain.handle('play-notification-sound', this.#handlePlayNotificationSound.bind(this));
+    ipcMain.handle('get-sound-buffer', this.#handleGetSoundBuffer.bind(this));
   }
 
   async #handleShowNotification(event, options) {
     const startTime = Date.now();
-    
+
     try {
       if (!this.#config.get('notifications.enabled')) {
         console.debug('[NotificationService] Notifications disabled');
@@ -69,31 +78,44 @@ class NotificationService {
   async #handlePlayNotificationSound(event, options) {
     try {
       if (!this.#config.get('notifications.sound.enabled')) {
-        console.debug('[NotificationService] Sounds disabled');
         return { success: false, reason: 'disabled' };
       }
 
       const userStatus = this.#getUserStatus();
-      if (this.#config.get('notifications.sound.disableWhenBusy') && 
+      if (this.#config.get('notifications.sound.disableWhenBusy') &&
           userStatus !== 'available') {
-        console.debug('[NotificationService] Sounds disabled - user not available');
         return { success: false, reason: 'user_busy' };
       }
 
-      if (!this.#soundPlayer) {
-        console.warn('[NotificationService] No sound player available');
-        return { success: false, reason: 'no_player' };
+      const type = (options && options.type) || 'message';
+      if (!SOUND_FILES[type]) {
+        return { success: false, reason: 'unknown_sound' };
       }
 
-      const soundType = options.type || 'message';
-      const soundFile = path.join(__dirname, '../assets/sounds', `${soundType}.wav`);
+      // Delegate actual playback to the renderer (Web Audio API).
+      // The renderer already loaded the buffer via `get-sound-buffer`.
+      if (this.#mainWindow && !this.#mainWindow.isDestroyed()) {
+        this.#mainWindow.webContents.send('linkus:play-sound', { type });
+      }
 
-      await this.#soundPlayer.play(soundFile);
-      
       return { success: true };
     } catch (error) {
       console.error('[NotificationService] Error playing sound:', error);
       return { success: false, reason: error.message };
+    }
+  }
+
+  async #handleGetSoundBuffer(event, type) {
+    const fileName = SOUND_FILES[type];
+    if (!fileName) return null;
+    try {
+      const filePath = path.join(this.#soundsDir, fileName);
+      const buf = await fs.promises.readFile(filePath);
+      // Return raw bytes; contextBridge will wrap as Uint8Array on the other side.
+      return buf;
+    } catch (err) {
+      console.error('[NotificationService] Error reading sound file:', err.message);
+      return null;
     }
   }
 }

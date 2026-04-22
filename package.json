@@ -10,18 +10,30 @@
     "dist:rpm": "electron-builder --linux rpm",
     "dist:AppImage": "electron-builder --linux AppImage",
     "build:deb": "bash scripts/build-deb.sh",
-    "register:tel": "bash scripts/register-tel.sh"
+    "register:tel": "bash scripts/register-tel.sh",
+    "audit": "npm audit --audit-level=high"
   },
   "keywords": ["linkus", "pbx", "tel", "electron", "softphone", "yeastar"],
   "author": "Andres Alonzo <@aalonzolu>",
   "license": "MIT",
   "homepage": "https://github.com/aalonzolu/linkus-linux",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aalonzolu/linkus-linux.git"
+  },
   "dependencies": {
-    "electron-positioner": "^4.1.0"
+    "electron-positioner": "^4.1.0",
+    "electron-updater": "^6.3.9"
   },
   "devDependencies": {
-    "electron": "^25.0.0",
-    "electron-builder": "^24.0.0"
+    "electron": "^41.2.2",
+    "electron-builder": "^26.0.12"
+  },
+  "overrides": {
+    "brace-expansion": "^2.0.2",
+    "path-to-regexp": "^8.2.0",
+    "picomatch": "^4.0.4",
+    "minimatch": "^10.0.3"
   },
   "build": {
     "appId": "com.github.aalonzolu.linkuslinux",
@@ -32,6 +44,13 @@
     "asarUnpack": [
       "build/icons/**",
       "app/assets/**"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "aalonzolu",
+        "repo": "linkus-linux"
+      }
     ],
     "linux": {
       "target": ["AppImage", "deb", "rpm"],
@@ -46,6 +65,7 @@
         "GenericName": "Softphone",
         "MimeType": "x-scheme-handler/tel",
         "Terminal": "false",
+        "StartupNotify": "true",
         "StartupWMClass": "linkus-linux",
         "Keywords": "phone;call;voip;pbx;yeastar;linkus;"
       },

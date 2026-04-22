@@ -32,11 +32,21 @@ const DEFAULT_CONFIG = {
     }
   },
   autoStart: false,
+  autostartPromptShown: false,
   startMinimized: false,
   serverUrl: '', // Yeastar P-Series PBX URL
   serverConfigured: false,
   appTitle: 'Linkus Linux',
-  appPath: __dirname
+  appPath: __dirname,
+  // WebRTC IP handling policy. One of:
+  //   'default' | 'default_public_interface_only' |
+  //   'default_public_and_private_interfaces' | 'disable_non_proxied_udp'
+  // Use 'default_public_interface_only' when on VPNs / multi-NIC setups to
+  // avoid leaking internal IPs and to fix NAT/audio issues.
+  webRTCIPHandlingPolicy: 'default',
+  autoUpdate: {
+    enabled: true
+  }
 };
 
 class Config {
