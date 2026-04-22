@@ -60,14 +60,16 @@
       "synopsis": "Linkus Linux",
       "description": "Unofficial Linkus client for Linux using Electron. Desktop application for Yeastar P-Series PBX with tel: protocol handler.",
       "desktop": {
-        "Name": "Linkus Linux",
-        "Comment": "Linkus PBX tel: handler",
-        "GenericName": "Softphone",
-        "MimeType": "x-scheme-handler/tel",
-        "Terminal": "false",
-        "StartupNotify": "true",
-        "StartupWMClass": "linkus-linux",
-        "Keywords": "phone;call;voip;pbx;yeastar;linkus;"
+        "entry": {
+          "Name": "Linkus Linux",
+          "Comment": "Linkus PBX tel: handler",
+          "GenericName": "Softphone",
+          "MimeType": "x-scheme-handler/tel",
+          "Terminal": "false",
+          "StartupNotify": "true",
+          "StartupWMClass": "linkus-linux",
+          "Keywords": "phone;call;voip;pbx;yeastar;linkus;"
+        }
       },
       "maintainer": "Andres Alonzo <aalonzolu@gmail.com>"
     },
