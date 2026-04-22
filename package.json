@@ -1,6 +1,6 @@
 {
   "name": "linkus-linux",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Unofficial Linkus client for Linux - Desktop app for Yeastar P-Series PBX with tel: protocol handler",
   "main": "main.js",
   "scripts": {
