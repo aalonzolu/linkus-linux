@@ -1,5 +1,6 @@
 const { Tray, Menu, nativeImage, ipcMain } = require('electron');
 const path = require('path');
+const { AutostartManager } = require('../autostart/linux');
 
 class TrayIconChooser {
   constructor(config) {
@@ -64,7 +65,7 @@ class ApplicationTray {
     }
 
     this.#tray.setToolTip(config.get('appTitle'));
-    this.#tray.on('click', () => this.showAndFocusWindow());
+    this.#tray.on('click', () => this.toggleWindow());
 
     this.updateContextMenu();
   }
@@ -85,16 +86,27 @@ class ApplicationTray {
   }
 
   showAndFocusWindow() {
-    if (this.#window) {
-      this.#window.show();
-      this.#window.focus();
+    if (!this.#window) return;
+    if (this.#window.isMinimized()) this.#window.restore();
+    this.#window.show();
+    this.#window.focus();
+  }
+
+  toggleWindow() {
+    if (!this.#window) return;
+    const visible = this.#window.isVisible() && !this.#window.isMinimized();
+    const focused = this.#window.isFocused();
+    if (visible && focused) {
+      this.#window.hide();
+    } else {
+      this.showAndFocusWindow();
     }
   }
 
   updateContextMenu() {
     const { app } = require('electron');
-    const autoLauncher = this.getAutoLauncher();
-    
+    const autostart = new AutostartManager();
+
     const menuTemplate = [
       {
         label: 'Show Linkus',
@@ -119,23 +131,32 @@ class ApplicationTray {
       },
       { type: 'separator' },
       {
-        label: 'Start on Boot',
+        label: 'Start at login',
         type: 'checkbox',
-        checked: this.#config.get('autoStart') || false,
-        click: async (menuItem) => {
-          try {
-            if (menuItem.checked) {
-              await autoLauncher.enable();
-              this.#config.set('autoStart', true);
-              console.log('[ApplicationTray] Auto-start enabled');
-            } else {
-              await autoLauncher.disable();
-              this.#config.set('autoStart', false);
-              console.log('[ApplicationTray] Auto-start disabled');
+        checked: autostart.isEnabled(),
+        click: (menuItem) => {
+          const ok = menuItem.checked ? autostart.enable() : autostart.disable();
+          if (ok) {
+            this.#config.set('autoStart', menuItem.checked);
+            // When the user first enables autostart, default to starting
+            // minimized so Linkus doesn't steal focus on every login.
+            if (menuItem.checked && this.#config.get('startMinimized') === false) {
+              this.#config.set('startMinimized', true);
             }
-          } catch (error) {
-            console.error('[ApplicationTray] Error toggling auto-start:', error);
+            console.log('[ApplicationTray] Auto-start', menuItem.checked ? 'enabled' : 'disabled');
+          } else {
+            console.error('[ApplicationTray] Auto-start toggle failed');
           }
+          // Rebuild the menu so the checkmark reflects the real file state.
+          this.updateContextMenu();
+        }
+      },
+      {
+        label: 'Start minimized to tray',
+        type: 'checkbox',
+        checked: Boolean(this.#config.get('startMinimized')),
+        click: (menuItem) => {
+          this.#config.set('startMinimized', menuItem.checked);
         }
       },
       {
@@ -155,44 +176,6 @@ class ApplicationTray {
     ];
 
     this.#tray.setContextMenu(Menu.buildFromTemplate(menuTemplate));
-  }
-
-  getAutoLauncher() {
-    const { app } = require('electron');
-    
-    return {
-      enable: () => {
-        return new Promise((resolve, reject) => {
-          if (app.isPackaged) {
-            app.setLoginItemSettings({
-              openAtLogin: true,
-              openAsHidden: false
-            });
-            resolve();
-          } else {
-            // Development mode - set executable path manually
-            app.setLoginItemSettings({
-              openAtLogin: true,
-              openAsHidden: false,
-              path: process.execPath,
-              args: [require('path').resolve(__dirname, '../../')]
-            });
-            resolve();
-          }
-        });
-      },
-      disable: () => {
-        return new Promise((resolve, reject) => {
-          app.setLoginItemSettings({
-            openAtLogin: false
-          });
-          resolve();
-        });
-      },
-      isEnabled: () => {
-        return app.getLoginItemSettings().openAtLogin;
-      }
-    };
   }
 
   async #handleSetBadgeCount(event, count) {
